@@ -1,118 +1,164 @@
 import streamlit as st
-import re
-import yake
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+import os
+import pdfplumber
+import docx
+from openai import OpenAI
+from dotenv import load_dotenv
 
-# ---------- Helper functions ----------
-def clean_text(t):
-    return re.sub(r'[^a-zA-Z0-9\s]', ' ', t.lower())
+# ---------------- Load API Key ----------------
+load_dotenv()
+key='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'
+client = OpenAI(api_key=key)
 
-def compute_match(jd_text, cv_text, top_k=15):
-    if not jd_text.strip() or not cv_text.strip():
-        return None
+# ---------------- Page Config ----------------
+st.set_page_config(page_title="CV–JD ATS Analyzer", layout="wide")
 
-    jd_clean = clean_text(jd_text)
-    cv_clean = clean_text(cv_text)
-
-    # TF-IDF cosine similarity
-    vectorizer = TfidfVectorizer(stop_words="english", max_features=5000)
-    tfidf = vectorizer.fit_transform([jd_clean, cv_clean])
-    cosine_sim = cosine_similarity(tfidf[0:1], tfidf[1:2])[0][0] * 100
-
-    # Keyword overlap
-    jd_words = set(jd_clean.split())
-    cv_words = set(cv_clean.split())
-    common = jd_words.intersection(cv_words)
-    overlap = (len(common) / len(jd_words)) * 100 if jd_words else 0
-
-    # Extract keywords using YAKE
-    kw_extractor = yake.KeywordExtractor(top=top_k)
-    jd_kws = [k for k, _ in kw_extractor.extract_keywords(jd_text)]
-    missing = [k for k in jd_kws if k.lower() not in cv_clean]
-
-    return {
-        "cosine": round(cosine_sim, 2),
-        "overlap": round(overlap, 2),
-        "common": list(common)[:15],
-        "missing": missing[:10],
-        "jd_keywords": jd_kws
-    }
-
-# ---------- Streamlit UI ----------
-st.set_page_config(page_title="JD–CV Match Analyzer ", layout="wide")
-
-# 💚 Custom Styles (Green, Purple, Indigo)
+# ---------------- Styles ----------------
 st.markdown("""
-    <style>
-    .title {
-        background: linear-gradient(90deg, #66bb6a, #a5d6a7);
-        color: white;
-        text-align: center;
-        padding: 15px;
-        border-radius: 12px;
-        font-size: 30px;
-        font-weight: bold;
-        margin-bottom: 25px;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.15);
-        letter-spacing: 1px;
-    }
-    .stButton button {
-        background-color: #66bb6a !important;
-        color: white !important;
-        border-radius: 10px;
-        font-weight: bold;
-        border: none;
-        transition: 0.3s;
-    }
-    .stButton button:hover {
-        background-color: #4caf50 !important;
-        transform: scale(1.03);
-    }
-    .purple-heading {
-        color: #9c27b0;
-        font-size: 22px;
-        font-weight: bold;
-        margin-top: 20px;
-    }
-    .indigo-heading {
-        color: #3f51b5;
-        font-size: 22px;
-        font-weight: bold;
-        margin-top: 20px;
-    }
-    </style>
-    <div class="title">💚 JD–CV Match Analyzer</div>
+<style>
+.title {
+    background: linear-gradient(90deg, #ab47bc, #ce93d8);
+    color: white;
+    text-align: center;
+    padding: 18px;
+    border-radius: 14px;
+    font-size: 32px;
+    font-weight: bold;
+    margin-bottom: 25px;
+}
+.purple {
+    color: #8e24aa;
+    font-size: 22px;
+    font-weight: bold;
+    margin-top: 20px;
+}
+.teal-result {
+    color: #00695c;
+    background-color: #e0f2f1;
+    padding: 16px;
+    border-radius: 12px;
+    border-left: 6px solid #00897b;
+    font-size: 16px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+}
+</style>
+
+<div class="title">💜 CV–JD ATS & Interview Assistant</div>
 """, unsafe_allow_html=True)
 
-st.caption("Paste your **Job Description** and **CV text** below to get similarity %, keyword overlap, and missing skill suggestions.")
+# ---------------- Helpers ----------------
+def extract_cv_text(file):
+    if file.name.endswith(".pdf"):
+        text = ""
+        with pdfplumber.open(file) as pdf:
+            for page in pdf.pages:
+                text += page.extract_text() or ""
+        return text
 
-# ---------- Text Inputs ----------
-st.markdown('<p class="purple-heading">🧠 Step 1: Paste Job Description (JD)</p>', unsafe_allow_html=True)
-jd_text = st.text_area("Job Description", height=250, placeholder="Paste the job description text here...")
+    elif file.name.endswith(".docx"):
+        doc = docx.Document(file)
+        return "\n".join(p.text for p in doc.paragraphs)
 
-st.markdown('<p class="purple-heading">👤 Step 2: Paste CV Text</p>', unsafe_allow_html=True)
-cv_text = st.text_area("Your CV", height=300, placeholder="Paste your CV/resume text here...")
+def ask_openai(prompt, max_tokens=600):
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=max_tokens
+    )
+    return response.choices[0].message.content
 
-# ---------- Processing ----------
-if jd_text and cv_text:
-    if st.button("🔍 Analyze Match"):
-        with st.spinner("Analyzing JD–CV similarity..."):
-            result = compute_match(jd_text, cv_text)
-        if result:
-            st.success("✅ Analysis complete!")
+# ---------------- UI ----------------
+st.markdown('<p class="purple">📄 Upload CV (PDF / DOCX)</p>', unsafe_allow_html=True)
+cv_file = st.file_uploader("Upload your CV", type=["pdf", "docx"])
 
-            col1, col2 = st.columns(2)
-            col1.metric("Cosine Similarity", f"{result['cosine']} %")
-            col2.metric("Keyword Overlap", f"{result['overlap']} %")
+st.markdown('<p class="purple">🧠 Paste Job Description (JD)</p>', unsafe_allow_html=True)
+jd_text = st.text_area("Job Description", height=260)
 
-            st.markdown('<p class="indigo-heading">🧩 Common Keywords</p>', unsafe_allow_html=True)
-            st.write(", ".join(result["common"]) if result["common"] else "None found")
+# ---------------- Processing ----------------
+if cv_file and jd_text:
+    cv_text = extract_cv_text(cv_file)
 
-            st.markdown('<p class="indigo-heading">⚠️ Missing Keywords (Consider Adding)</p>', unsafe_allow_html=True)
-            st.write(", ".join(result["missing"]) if result["missing"] else "None — excellent match!")
+    if st.button("🚀 Analyze CV"):
+        with st.spinner("Analyzing CV using OpenAI..."):
 
-            with st.expander("📋 Top Keywords Extracted from JD"):
-                st.write(", ".join(result["jd_keywords"]))
+            ats_prompt = f"""
+            You are an ATS system.
+            Analyze the CV against the Job Description.
+
+            Provide:
+            1. ATS Match Score (0–100)
+            2. Extracted Skills
+            3. Missing Skills
+            4. Resume Improvement Suggestions
+
+            CV:
+            {cv_text}
+
+            Job Description:
+            {jd_text}
+            """
+
+            ats_result = ask_openai(ats_prompt)
+
+            interview_prompt = f"""
+            Generate JD-specific interview questions.
+            Sections:
+            - Cloud / DevOps Architecture
+            - MLOps (Azure preferred)
+            - Python
+            - System Design
+            - Behavioral
+            """
+
+            interview_qs = ask_openai(interview_prompt)
+
+        # ---------------- Results ----------------
+        st.success("✅ Analysis Complete")
+
+        tab1, tab2, tab3 = st.tabs([
+            "📊 ATS Analysis",
+            "💡 Recommendations",
+            "🎤 Interview Prep"
+        ])
+
+        with tab1:
+            st.markdown('<p class="purple">ATS Evaluation</p>', unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="teal-result">{ats_result}</div>',
+                unsafe_allow_html=True
+            )
+
+        with tab2:
+            st.markdown('<p class="purple">Resume Recommendations</p>', unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="teal-result">{ats_result}</div>',
+                unsafe_allow_html=True
+            )
+
+        with tab3:
+            st.markdown('<p class="purple">Interview Questions</p>', unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="teal-result">{interview_qs}</div>',
+                unsafe_allow_html=True
+            )
+
+        # ---------------- Download ----------------
+        final_report = f"""
+ATS ANALYSIS
+------------
+{ats_result}
+
+INTERVIEW QUESTIONS
+-------------------
+{interview_qs}
+"""
+
+        st.download_button(
+            "📥 Download Full Report",
+            data=final_report,
+            file_name="CV_JD_ATS_Report.txt"
+        )
+
 else:
-    st.info("Paste both JD and CV text above to analyze match.")
+    st.info("⬆️ Upload CV and paste JD to start analysis")
