@@ -11,7 +11,8 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 
-key = os.getenv("OPENAI_API_KEY")
+key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
+
 if not key:
     st.error("❌ OpenAI API key not found")
     st.stop()
