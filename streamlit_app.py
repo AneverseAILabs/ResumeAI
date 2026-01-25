@@ -7,7 +7,15 @@ from dotenv import load_dotenv
 
 # ---------------- Load API Key ----------------
 load_dotenv()
-key='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'
+import os
+from dotenv import load_dotenv
+from openai import OpenAI
+
+key = os.getenv("OPENAI_API_KEY")
+if not key:
+    st.error("❌ OpenAI API key not found")
+    st.stop()
+
 client = OpenAI(api_key=key)
 
 # ---------------- Page Config ----------------
